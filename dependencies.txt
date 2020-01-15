@@ -1,2 +1,2 @@
-olefile==0.43
-Pillow==4.0.0
+olefile
+Pillow
