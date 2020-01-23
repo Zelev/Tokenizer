@@ -1,6 +1,6 @@
 """Created by Zelev."""
 # Script to facilitate the creation of tokens for tabletop gaming
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageFilter, ImageOps, ImageEnhance
 
 
 sizes = {
@@ -34,19 +34,28 @@ def concat_images(img1, img2):
     return img_result
 
 
-# The raw prefix will be about the original image
 def main():
+    # The raw prefix will be about the original image
     raw_name = do_io('img_name')
     desired_size = do_io('img_scale')
     print(f"desired size: {desired_size}")
     raw_image = Image.open(raw_name)
-    raw_image.thumbnail(size=(raw_image.width,sizes[desired_size]), resample=Image.LANCZOS)
+    # Change the contrast so it looks fine printed
+    enhancer = ImageEnhance.Brightness(raw_image)
+    if desired_size == "tiny":
+        bright_image = enhancer.enhance(1.6)
+    elif desired_size == "small":
+        bright_image = enhancer.enhance(1.5)
+    else:
+        bright_image = enhancer.enhance(1.3)
+    # Resize the image
+    bright_image.thumbnail(size=(bright_image.width,sizes[desired_size]), resample=Image.LANCZOS)
     # The image to use in the back of the mini will be a pure contour of the original.
-    contour_image = raw_image.filter(ImageFilter.CONTOUR)
+    contour_image = bright_image.filter(ImageFilter.CONTOUR)
     crotated_image = ImageOps.flip(contour_image)
-    binder = Image.new('RGB', (raw_image.width, 30))
+    binder = Image.new('RGB', (bright_image.width, 30))
     # Create a new image that will contain the final version and the horde
-    coined = concat_images(concat_images(crotated_image, binder), raw_image)
+    coined = concat_images(concat_images(crotated_image, binder), bright_image)
     final = Image.new('RGB', ((coined.width * 5), coined.height))
     for i in range(5):
         final.paste(coined, (coined.width * i, 0))
