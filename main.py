@@ -1,67 +1,125 @@
 """Created by Zelev."""
 # Script to facilitate the creation of tokens for tabletop gaming
-from PIL import Image, ImageFilter, ImageOps, ImageEnhance
+
+from enum import Enum
+from pathlib import Path
+
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 
-sizes = {
-    # Lists all the pixels siz for the height, the rest is aspect ratio conservation
-    # Assuming always a 300 dpi for al source images.
-    'large': 500,
-    'medium': 330,
-    'small': 200,
-    'tiny': 100,
+class TokenSize(Enum):
+    LARGE = 500
+    MEDIUM = 330
+    SMALL = 200
+    TINY = 100
+
+    @property
+    def label(self) -> str:
+        return self.name.lower()
+
+    @classmethod
+    def choices(cls) -> list[TokenSize]:
+        return list(cls)
+
+    @classmethod
+    def from_index(cls, index: int) -> TokenSize:
+        try:
+            return cls.choices()[index - 1]
+        except IndexError as exc:
+            raise ValueError("Please select a value in the list.") from exc
+
+
+RESAMPLING: int = Image.Resampling.LANCZOS
+BRIGHTNESS_BY_SIZE: dict[TokenSize, float] = {
+    TokenSize.TINY: 1.6,
+    TokenSize.SMALL: 1.5,
 }
+TOKEN_REPEAT_COUNT = 5
+TOKEN_BINDER_HEIGHT = 30
 
 
-def do_io(action):
-    if action == 'img_name':
-        return input("Please input the name of the image:\n")
-    elif action == 'img_scale':
-        size_msg = "Please select the size from the list: \n"
-        for idx, size in enumerate(sizes):
-            size_msg += f"{idx + 1}. {size}\n"
-        desired_size = int(input(size_msg))
-        while desired_size not in range(1, len(sizes.keys())+1):
-            desired_size = input(f"Please select a value in the list: \n")
-        desired_size = list(sizes)[desired_size - 1]
-        return desired_size
+def prompt_for_image_name() -> str:
+    raw_name = input("Please input the name of the image:\n").strip()
+    if not raw_name:
+        raise ValueError("Image name cannot be empty.")
+    return raw_name
 
 
-def concat_images(img1, img2):
-    img_result = Image.new('RGB', (img1.width, img1.height + img2.height))
+def prompt_for_size() -> TokenSize:
+    size_msg = "Please select the size from the list:\n"
+    for idx, size in enumerate(TokenSize.choices(), start=1):
+        size_msg += f"{idx}. {size.label}\n"
+
+    while True:
+        try:
+            choice = int(input(size_msg).strip())
+        except ValueError:
+            print("Please enter a valid number from the list.")
+            continue
+        try:
+            return TokenSize.from_index(choice)
+        except ValueError:
+            print("Please select a value in the list.")
+
+
+def concat_images(img1: Image.Image, img2: Image.Image) -> Image.Image:
+    img_result = Image.new("RGB", (img1.width, img1.height + img2.height))
     img_result.paste(img1, (0, 0))
     img_result.paste(img2, (0, img1.height))
     return img_result
 
 
-def main():
-    # The raw prefix will be about the original image
-    raw_name = do_io('img_name')
-    desired_size = do_io('img_scale')
-    print(f"desired size: {desired_size}")
-    raw_image = Image.open(raw_name)
-    # Change the contrast so it looks fine printed
-    enhancer = ImageEnhance.Brightness(raw_image)
-    if desired_size == "tiny":
-        bright_image = enhancer.enhance(1.6)
-    elif desired_size == "small":
-        bright_image = enhancer.enhance(1.5)
-    else:
-        bright_image = enhancer.enhance(1.3)
-    # Resize the image
-    bright_image.thumbnail(size=(bright_image.width,sizes[desired_size]), resample=Image.LANCZOS)
-    # The image to use in the back of the mini will be a pure contour of the original.
-    contour_image = bright_image.filter(ImageFilter.CONTOUR)
-    crotated_image = ImageOps.flip(contour_image)
-    binder = Image.new('RGB', (bright_image.width, 30))
-    # Create a new image that will contain the final version and the horde
-    coined = concat_images(concat_images(crotated_image, binder), bright_image)
-    final = Image.new('RGB', ((coined.width * 5), coined.height))
-    for i in range(5):
+def apply_brightness(image: Image.Image, size: TokenSize) -> Image.Image:
+    enhancer = ImageEnhance.Brightness(image)
+    brightness = BRIGHTNESS_BY_SIZE.get(size, 1.3)
+    return enhancer.enhance(brightness)
+
+
+def resize_image(image: Image.Image, size: TokenSize) -> Image.Image:
+    resized = image.copy()
+    resized.thumbnail(
+        size=(resized.width, size.value),
+        resample=RESAMPLING,
+    )
+    return resized
+
+
+def build_token_sheet(image: Image.Image) -> tuple[Image.Image, Image.Image]:
+    contour_image = image.filter(ImageFilter.CONTOUR)
+    rotated_image = ImageOps.flip(contour_image)
+    binder = Image.new("RGB", (image.width, TOKEN_BINDER_HEIGHT))
+
+    coined = concat_images(concat_images(rotated_image, binder), image)
+    final = Image.new("RGB", (coined.width * TOKEN_REPEAT_COUNT, coined.height))
+    for i in range(TOKEN_REPEAT_COUNT):
         final.paste(coined, (coined.width * i, 0))
-    final.save(f"./{raw_name}_{desired_size}_coined_horde.jpg")
-    coined.save(f"./{raw_name}_{desired_size}_coined.jpg")
+
+    return final, coined
 
 
-if __name__ == '__main__':
+def save_outputs(image_name: str, size: TokenSize, final_image: Image.Image, coined_image: Image.Image) -> None:
+    stem = Path(image_name).stem
+    final_path = Path(f"./{stem}_{size.label}_coined_horde.jpg")
+    coined_path = Path(f"./{stem}_{size.label}_coined.jpg")
+
+    final_image.save(final_path)
+    coined_image.save(coined_path)
+
+
+def main() -> None:
+    image_name = prompt_for_image_name()
+    size = prompt_for_size()
+    print(f"Desired size: {size.label}")
+
+    with Image.open(image_name) as raw_image:
+        prepared = resize_image(
+            apply_brightness(raw_image, size),
+            size,
+        )
+        final_image, coined_image = build_token_sheet(prepared)
+
+    save_outputs(image_name, size, final_image, coined_image)
+
+
+if __name__ == "__main__":
     main()
